@@ -37,12 +37,78 @@ rồi gọi verify() phải trả về False.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
+
+ZERO_HASH = "0" * 64
+
+
+def _compute_hash(entry_without_hash: dict) -> str:
+    """Compute SHA-256 hash of an entry (excluding the 'hash' field itself)."""
+    serialized = json.dumps(entry_without_hash, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _get_last_hash(path: Path) -> str:
+    """Get the hash of the last entry in the ledger file."""
+    if not path.exists():
+        return ZERO_HASH
+    lines = path.read_text(encoding="utf-8").strip().splitlines()
+    if not lines:
+        return ZERO_HASH
+    last_entry = json.loads(lines[-1])
+    return last_entry.get("hash", ZERO_HASH)
 
 
 def append(entry: dict, path: Path) -> dict:
-    raise NotImplementedError("BƯỚC 3d: implement ledger append")
+    # Create parent directories if needed
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Build entry with prev_hash
+    entry = dict(entry)  # copy to avoid mutating caller's dict
+    entry["prev_hash"] = _get_last_hash(path)
+
+    # Compute hash (without the 'hash' field itself)
+    entry_for_hash = {k: v for k, v in entry.items() if k != "hash"}
+    entry["hash"] = _compute_hash(entry_for_hash)
+
+    # Append to file
+    line = json.dumps(entry, ensure_ascii=False)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+    return entry
 
 
 def verify(path: Path) -> bool:
-    raise NotImplementedError("BƯỚC 3d: implement ledger verify")
+    if not path.exists():
+        return True
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return True
+
+    lines = text.splitlines()
+    expected_prev_hash = ZERO_HASH
+
+    for line in lines:
+        entry = json.loads(line)
+
+        # Check reason is non-empty
+        if not entry.get("reason"):
+            return False
+
+        # Check prev_hash chain
+        if entry.get("prev_hash") != expected_prev_hash:
+            return False
+
+        # Recompute hash and compare
+        stored_hash = entry.get("hash", "")
+        entry_for_hash = {k: v for k, v in entry.items() if k != "hash"}
+        computed_hash = _compute_hash(entry_for_hash)
+        if stored_hash != computed_hash:
+            return False
+
+        expected_prev_hash = stored_hash
+
+    return True
