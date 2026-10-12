@@ -34,7 +34,12 @@ không phải xác thực người dùng production.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+PRINCIPALS_FILE = Path(__file__).resolve().parent.parent / "data" / "principals.json"
 
 
 @dataclass(frozen=True)
@@ -51,5 +56,65 @@ class PolicyContext:
     expires_at: str = ""
 
 
+def _load_principals() -> dict:
+    return json.loads(PRINCIPALS_FILE.read_text(encoding="utf-8"))
+
+
 def check(context: PolicyContext) -> tuple[bool, str]:
-    raise NotImplementedError("BƯỚC 3b: implement policy check")
+    # Rule 1: restricted + egress -> DENY (minimum rule, always checked first)
+    if context.data_classification == "restricted" and context.egress_enabled:
+        return False, "DENY: restricted data with egress enabled"
+
+    # OBO checks only apply when principal_id is provided
+    if context.principal_id:
+        # Load principals
+        principals = _load_principals()
+
+        # Unknown principal -> DENY
+        if context.principal_id not in principals:
+            return False, f"DENY: unknown principal '{context.principal_id}'"
+
+        principal = principals[context.principal_id]
+
+        # Check expires_at
+        if context.expires_at:
+            try:
+                expires = datetime.fromisoformat(context.expires_at)
+                now = datetime.now(timezone.utc)
+                if expires <= now:
+                    return False, f"DENY: session expired at {context.expires_at}"
+            except ValueError:
+                return False, f"DENY: invalid expires_at format '{context.expires_at}'"
+
+        # Check purpose
+        if context.request_purpose and "purposes" in principal:
+            if context.request_purpose not in principal["purposes"]:
+                return False, (
+                    f"DENY: purpose '{context.request_purpose}' not allowed "
+                    f"for principal '{context.principal_id}'"
+                )
+
+        # Compute effective scopes
+        if context.requested_tool:
+            allowed_tools = set(principal.get("allowed_tools", []))
+            agent_scopes = set(context.agent_scopes)
+            effective = allowed_tools & agent_scopes
+
+            # If delegation_depth > 0, also intersect with parent_scopes
+            if context.delegation_depth > 0:
+                parent_scopes = set(context.parent_scopes)
+                effective = effective & parent_scopes
+
+            if context.requested_tool not in effective:
+                return False, (
+                    f"DENY: tool '{context.requested_tool}' not in effective scopes "
+                    f"for principal '{context.principal_id}' "
+                    f"(effective={sorted(effective)})"
+                )
+
+    return True, (
+        f"ALLOW: {context.requested_tool or 'operation'} permitted — "
+        f"classification={context.data_classification}, "
+        f"principal={context.principal_id or 'none'}, "
+        f"purpose={context.request_purpose}"
+    )
