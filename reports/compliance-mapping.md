@@ -2,9 +2,9 @@
 
 | Nguồn / yêu cầu | Control đã làm | Evidence file:dòng | Giới hạn |
 |---|---|---|---|
-| Luật 91/2025/QH15 | | | |
-| NĐ 356/2025/NĐ-CP | | | |
-| Luật AI 134/2025/QH15 | | | |
-| OWASP ASI01, ASI03, ASI04 | | | |
+| Luật 91/2025/QH15 (Bảo vệ dữ liệu cá nhân) | PII gate phát hiện & bôi xóa CCCD, SĐT, STK, email trước boundary; phân loại dữ liệu `restricted` cấm exfiltration; kiểm soát quyền truy cập theo vai trò (OBO: DPO được phép, Support L1 bị chặn). | `agent/pii.py:59-120`<br>`agent/policy.py:64-66,97-114`<br>`agent/runner.py:208-210,218-234` | Regex PII tối ưu cho định dạng chuẩn VN trong tập dữ liệu tổng hợp (`vn_pii_testset.jsonl`), chưa bao quát tên người tự do phức tạp; danh tính principal mô phỏng qua `--as`, chưa tích hợp IdP/SSO thực tế. |
+| NĐ 356/2025/NĐ-CP (Biện pháp kỹ thuật & nhật ký bảo đảm ATDL) | Audit ledger append-only với chuỗi băm tamper-evident SHA-256 ghi nhận toàn bộ tool calls (allow & deny); chặn truyền dữ liệu nhạy cảm ra ngoài (`http_post` deny). | `agent/ledger.py:58-132`<br>`agent/policy.py:65-66`<br>`reports/ledger.jsonl:1-23` | Chuỗi băm lưu trên file cục bộ, chưa gắn mốc thời gian ngoài (RFC 3161 / KMS HSM) nên chưa chống được việc xóa dòng cuối hoặc viết lại toàn bộ file nếu bị chiếm quyền filesystem; sink nghe localhost `127.0.0.1:10024`. |
+| Luật AI 134/2025/QH15 (Trách nhiệm & an toàn tác tử AI) | Kiến trúc Trifecta split phân tách Run A (untrusted content) và Run B (private data); chính sách PEP minh bạch, giải trình được với 100% quyết định có `reason`; kiểm soát thời hạn phiên (session TTL). | `agent/runner.py:178-253`<br>`agent/policy.py:63-120`<br>`reports/ledger.jsonl:1-23` | Mọi quyết định policy được thực thi bằng logic Python deterministic, chưa tích hợp engine chính sách phân tán như OPA/Cedar; mô hình LLM được mô phỏng deterministic qua `--mock`. |
+| OWASP ASI01, ASI03, ASI04 (Agentic Security) | - ASI01 (Goal Hijack): Trifecta split chặn injection từ free text, chỉ dùng ticket ID từ tên file và ánh xạ qua `customers.json`.<br>- ASI03 (Misaligned Tools): PEP kiểm tra giao quyền (effective scopes) trước mọi tool call.<br>- ASI04 (Improper Data Handling): Chặn egress với restricted data, PII redact trước boundary; `attack-after.log` rỗng. | `agent/runner.py:100-121,206,216`<br>`agent/policy.py:65-66,97-114`<br>`reports/attack-after.log`<br>`tests/test_split.py:1-55` | Lab dùng môi trường kiểm thử khép kín trên localhost, chưa kiểm soát các kênh exfiltration ngoài băng tầng (DNS tunneling, steganography). |
 
 Chỉ ghi điều khoản cụ thể khi đã đối chiếu văn bản gốc. Mô phỏng kỹ thuật không tự chứng minh tuân thủ pháp luật.
